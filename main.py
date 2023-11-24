@@ -15,9 +15,7 @@ import speech_recognition as sr
 import pyttsx3
 from api import getAnswer
 import unicodedata
-
-
-
+import os  
 
 STATUS_FIRST_FRAME = 0  # 第一帧的标识
 STATUS_CONTINUE_FRAME = 1  # 中间帧标识
@@ -91,12 +89,9 @@ def on_message(ws, message):
     except Exception as e:
         print("receive msg,but parse exception:", e)
 
-
-
 # 收到websocket错误的处理
 def on_error(ws, error):
     print("### error:", error)
-
 
 # 收到websocket关闭的处理
 def on_close(ws,a,b):
@@ -148,28 +143,94 @@ def on_open(ws):
         ws.close()
     thread.start_new_thread(run, ())
 
-
-if __name__ == "__main__":
-    time1 = datetime.now()
+def listenMicrophone(): #监听麦克风并录音，保存为microphone-results.pcm
     r = sr.Recognizer()
+    print("Listening...")
+    #若十秒内无输入，则返回False，否则返回True
     with sr.Microphone() as source:
-        print("请说话：")
-        audio = r.listen(source)
+        audio = r.listen(source,phrase_time_limit=10)
+    
+    # 检查是否有声音输入
+    if not audio.frame_data:
+        return False
+
     #将audio数据转化为pcm文件格式
     with open("microphone-results.pcm", "wb") as f:
         f.write(audio.get_raw_data(convert_rate=16000, convert_width=2))
-    wsParam = Ws_Param(APPID='753802bb', APISecret='NTJlNmEyMWY3ZjQ0NjMwM2VhOTYzYzNm',
+    
+    return True
+
+wsParam = Ws_Param(APPID='753802bb', APISecret='NTJlNmEyMWY3ZjQ0NjMwM2VhOTYzYzNm',
                        APIKey='1809a16e0ae7c917882bad17a3d4354b',
-                       AudioFile=r"microphone-results.pcm")
+                       AudioFile='microphone-results.pcm')
+
+def recognize_xunfei(): #调用讯飞语音识别API，返回识别结果    
     websocket.enableTrace(False)
     wsUrl = wsParam.create_url()
     ws = websocket.WebSocketApp(wsUrl, on_message=on_message, on_error=on_error, on_close=on_close)
     ws.on_open = on_open
     ws.run_forever(sslopt={"cert_reqs": ssl.CERT_NONE})
-    print("识别结果："+reply)
-    out=getAnswer(reply)
-    engine = pyttsx3.init()
-    engine.say(out[1]["content"])
+    return reply
+
+engine = pyttsx3.init()
+
+def speak(reply):#将讯飞火星的回复转为语音输出    
+    engine.say(reply)
     engine.runAndWait()
+
+def listen_and_recognize():
+    r = sr.Recognizer()
+    with sr.Microphone() as source:
+        print("Listening...")
+        audio = r.listen(source)
+        try:
+            text = r.recognize_sphinx(audio,language="zh-CN")
+            print("You said:" + text)
+            return text
+        except sr.UnknownValueError:
+            print("Sphinx could not understand audio")
+        except sr.RequestError as e:
+            print("Sphinx error; {0}".format(e))
+
+def listen_for_wake_word(wake_word):
+    global reply
+    while True:
+        if listenMicrophone():
+            text=recognize_xunfei()
+            print(text)
+            
+        if text == wake_word:
+            os.remove("microphone-results.pcm")
+            # 设置语速
+            rate = engine.getProperty('rate')   # 获取当前的语速
+            engine.setProperty('rate', rate-80)  # 将语速减少80
+            engine.say("我在")
+            engine.runAndWait()
+            rate = engine.getProperty('rate')   # 获取当前的语速
+            engine.setProperty('rate', rate+80)  
+            #开始对话，当说出“再见”时或者超过10秒没有说话时结束对话
+            while listenMicrophone():
+                reply=""
+                try:                        
+                    reply=recognize_xunfei()
+                    print("1",reply)
+                    #删除"microphone-results.pcm文件
+                    os.remove("microphone-results.pcm")
+                    if '再见' in reply or reply=="":
+                        engine.say("再见")
+                        engine.runAndWait()
+                        break
+                    else:
+                        text=getAnswer(reply)
+                        print(text)
+                        text=text[1]["content"]
+                        engine.say(text)
+                        engine.runAndWait()
+                except:
+                    print("没有听清楚")
+                    break
+                    
+           
+        
     
-    
+listen_for_wake_word("小鱼儿")
